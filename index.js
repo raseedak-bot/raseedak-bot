@@ -312,9 +312,12 @@ http.createServer((req, res) => {
 
 // ── POLLING ───────────────────────────────────────────────
 let lastOffset = 0;
+let isPolling = false;
 async function poll() {
+  if (isPolling) { setTimeout(poll, 2000); return; }
+  isPolling = true;
   try {
-    const r = await tgReq("getUpdates", { offset: lastOffset, timeout: 25 });
+    const r = await tgReq("getUpdates", { offset: lastOffset, timeout: 20 });
     if (r.ok && r.result && r.result.length > 0) {
       for (const u of r.result) {
         try { await handleUpdate(u); } catch(e) { console.error("Handle error:", e.message); }
@@ -322,7 +325,8 @@ async function poll() {
       }
     }
   } catch(e) { console.error("Poll error:", e.message); }
-  setTimeout(poll, 1000);
+  isPolling = false;
+  setTimeout(poll, 1500);
 }
 
 console.log("🤖 RASEEDAK Bot starting...");

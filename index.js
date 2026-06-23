@@ -58,7 +58,8 @@ function getFileUrl(fileId) {
 // ── CLAUDE VISION ─────────────────────────────────────────
 function analyzeImage(imageUrl, prompt) {
   return new Promise((resolve) => {
-    if (!CLAUDE_KEY) return resolve({ error: "No API key" });
+    const cleanKey = (CLAUDE_KEY || "").trim().replace(/[\r\n\t]/g, "");
+    if (!cleanKey) return resolve({ error: "No API key" });
     https.get(imageUrl, (imgRes) => {
       const chunks = [];
       imgRes.on("data", c => chunks.push(c));
@@ -75,7 +76,7 @@ function analyzeImage(imageUrl, prompt) {
         const opts = {
           hostname: "api.anthropic.com", path: "/v1/messages", method: "POST",
           headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body),
-            "x-api-key": CLAUDE_KEY, "anthropic-version": "2023-06-01" }
+            "x-api-key": cleanKey, "anthropic-version": "2023-06-01" }
         };
         const req = https.request(opts, (res) => {
           let raw = "";

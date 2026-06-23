@@ -204,7 +204,7 @@ async function handleUpdate(update) {
     await sendMsg(chatId, "⏳ جاري معالجة الصورة بالذكاء الاصطناعي...");
 
     if (state === "invoice") {
-      const res = await analyzeImage(url, "هذه فاتورة. أرجع JSON فقط: {\"amount\": رقم, \"desc\": \"وصف قصير\"}");
+      const res = await analyzeImage(url, "انظر لهذه الفاتورة. ابحث عن المبلغ الإجمالي (Total او Grand Total او الإجمالي او Cash Tendered). أرجع JSON فقط بدون أي نص: {\"amount\": رقم_المبلغ_الاجمالي, \"desc\": \"وصف_قصير_للفاتورة\"}");
       if (!res.amount) { await sendMsg(chatId, "❌ لم أتمكن من قراءة المبلغ. جرب صورة أوضح."); return; }
       const inv = { id: Date.now(), driverId: userId, driverName: driver ? driver.name : firstName, chatId: parseInt(userId), amount: res.amount, desc: res.desc || "فاتورة", imageUrl: url, date: new Date().toISOString(), approved: false, pending: true, rejected: false };
       data.invoices.push(inv);

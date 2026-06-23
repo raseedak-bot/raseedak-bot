@@ -87,9 +87,11 @@ function analyzeImage(imageUrl, prompt) {
               const txt = d.content && d.content[0] ? d.content[0].text : "";
               const cleaned = txt.replace(/```[\w]*/g, "").trim();
               // Find JSON object in response
-              const jsonMatch = cleaned.match(/\{[^{}]*\}/);
-              if (jsonMatch) resolve(JSON.parse(jsonMatch[0]));
-              else resolve(JSON.parse(cleaned));
+              const jsonMatch = cleaned.match(/\{[\s\S]*?\}/);
+              if (jsonMatch) {
+                try { resolve(JSON.parse(jsonMatch[0])); }
+                catch(pe) { resolve({error: "parse error: "+pe.message}); }
+              } else resolve({error: "no JSON found in: "+cleaned.slice(0,100)});
             } catch(e) { resolve({ error: e.message }); }
           });
         });
@@ -208,7 +210,7 @@ async function handleUpdate(update) {
     await sendMsg(chatId, "⏳ جاري معالجة الصورة بالذكاء الاصطناعي...");
 
     if (state === "invoice") {
-      const res = await analyzeImage(url, "انظر لهذه الفاتورة. ابحث عن المبلغ الإجمالي (Total او Grand Total او الإجمالي او Cash Tendered). أرجع JSON فقط بدون أي نص: {\"amount\": رقم_المبلغ_الاجمالي, \"desc\": \"وصف_قصير_للفاتورة\"}");
+      const res = await analyzeImage(url, "Look at this receipt/invoice. Find the total amount. Reply with ONLY this JSON, nothing else: {\"amount\": NUMBER, \"desc\": \"SHORT_DESCRIPTION\"} - Example: {\"amount\": 7.000, \"desc\": \"Crops Coffee\"}");
       if (!res.amount) { await sendMsg(chatId, "❌ لم أتمكن من قراءة المبلغ. جرب صورة أوضح."); return; }
       const inv = { id: Date.now(), driverId: userId, driverName: driver ? driver.name : firstName, chatId: parseInt(userId), amount: res.amount, desc: res.desc || "فاتورة", imageUrl: url, date: new Date().toISOString(), approved: false, pending: true, rejected: false };
       data.invoices.push(inv);

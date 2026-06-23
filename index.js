@@ -2,15 +2,12 @@ const https = require("https");
 const http = require("http");
 const fs = require("fs");
 
-// ── CONFIG ──────────────────────────────────────────────
 const TG_TOKEN = process.env.TG_TOKEN || "";
 const CLAUDE_KEY = process.env.ANTHROPIC_API_KEY || "";
 const OWNER_ID = parseInt(process.env.OWNER_ID || "0");
 const PORT = process.env.PORT || 3000;
-const API_SECRET = process.env.API_SECRET || "raseedak2024";
-
-// ── DATA STORE ───────────────────────────────────────────
 const DATA_FILE = "./data.json";
+
 function loadData() {
   try { return JSON.parse(fs.readFileSync(DATA_FILE, "utf8")); }
   catch(e) { return { drivers: {}, shifts: [], invoices: [] }; }
@@ -19,13 +16,12 @@ function saveData(d) {
   try { fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2)); } catch(e) {}
 }
 
-// ── TELEGRAM ─────────────────────────────────────────────
 function tgReq(method, body) {
   return new Promise((resolve) => {
     const data = JSON.stringify(body);
     const opts = {
       hostname: "api.telegram.org",
-      path: `/bot${TG_TOKEN}/${method}`,
+      path: "/bot" + TG_TOKEN + "/" + method,
       method: "POST",
       headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }
     };
@@ -40,73 +36,95 @@ function tgReq(method, body) {
 }
 
 function sendMsg(chatId, text, keyboard) {
-  const body = { chat_id: chatId, text, parse_mode: "HTML" };
-  if (keyboard) body.reply_markup = { keyboard, resize_keyboard: true };
+  const body = { chat_id: chatId, text: text, parse_mode: "HTML" };
+  if (keyboard) body.reply_markup = { keyboard: keyboard, resize_keyboard: true };
   return tgReq("sendMessage", body);
 }
 
 function sendInline(chatId, text, inline_keyboard) {
-  return tgReq("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", reply_markup: { inline_keyboard } });
+  return tgReq("sendMessage", { chat_id: chatId, text: text, parse_mode: "HTML", reply_markup: { inline_keyboard: inline_keyboard } });
 }
 
 function getFileUrl(fileId) {
-  return tgReq("getFile", { file_id: fileId }).then(r =>
-    r.ok ? `https://api.telegram.org/file/bot${TG_TOKEN}/${r.result.file_path}` : null
-  );
+  return tgReq("getFile", { file_id: fileId }).then(function(r) {
+    return r.ok ? "https://api.telegram.org/file/bot" + TG_TOKEN + "/" + r.result.file_path : null;
+  });
 }
 
-// ── CLAUDE VISION ─────────────────────────────────────────
 function analyzeImage(imageUrl, prompt) {
-  return new Promise((resolve) => {
+  return new Promise(function(resolve) {
     const cleanKey = (CLAUDE_KEY || "").trim().replace(/[\r\n\t]/g, "");
     if (!cleanKey) return resolve({ error: "No API key" });
-    https.get(imageUrl, (imgRes) => {
+    https.get(imageUrl, function(imgRes) {
       const chunks = [];
-      imgRes.on("data", c => chunks.push(c));
-      imgRes.on("end", () => {
+      imgRes.on("data", function(c) { chunks.push(c); });
+      imgRes.on("end", function() {
         const b64 = Buffer.concat(chunks).toString("base64");
         const mediaType = imgRes.headers["content-type"] || "image/jpeg";
         const body = JSON.stringify({
-          model: "claude-sonnet-4-6", max_tokens: 500,
+          model: "claude-sonnet-4-6",
+          max_tokens: 1024,
           messages: [{ role: "user", content: [
             { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
             { type: "text", text: prompt }
           ]}]
         });
         const opts = {
-          hostname: "api.anthropic.com", path: "/v1/messages", method: "POST",
-          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body),
-            "x-api-key": cleanKey, "anthropic-version": "2023-06-01" }
+          hostname: "api.anthropic.com",
+          path: "/v1/messages",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body, "utf8"),
+            "x-api-key": cleanKey,
+            "anthropic-version": "2023-06-01"
+          }
         };
-        const req = https.request(opts, (res) => {
+        const req = https.request(opts, function(res) {
           let raw = "";
-          res.on("data", c => raw += c);
-          res.on("end", () => {
+          res.on("data", function(c) { raw += c; });
+          res.on("end", function() {
             try {
               const d = JSON.parse(raw);
               const txt = d.content && d.content[0] ? d.content[0].text : "";
-              const cleaned = txt.replace(/```[\w]*/g, "").trim();
-              // Find JSON object in response
-              const jsonMatch = cleaned.match(/\{[\s\S]*?\}/);
+              const jsonMatch = txt.match(/\{[\s\S]*?\}/);
               if (jsonMatch) {
-                try { resolve(JSON.parse(jsonMatch[0])); }
-                catch(pe) { resolve({error: "parse error: "+pe.message}); }
-              } else resolve({error: "no JSON found in: "+cleaned.slice(0,100)});
+                try { return resolve(JSON.parse(jsonMatch[0])); } catch(e) {}
+              }
+              return resolve({ error: "Could not parse: " + txt.slice(0, 50) });
             } catch(e) { resolve({ error: e.message }); }
           });
         });
-        req.on("error", e => resolve({ error: e.message }));
+        req.on("error", function(e) { resolve({ error: e.message }); });
         req.write(body); req.end();
       });
-    }).on("error", e => resolve({ error: e.message }));
+    }).on("error", function(e) { resolve({ error: e.message }); });
   });
 }
 
-const MENU = [["📋 إرسال فاتورة", "🚗 بداية الوردية"], ["🏁 نهاية الوردية", "📊 إحصائياتي"]];
+const MENU_AR = [["📋 إرسال فاتورة", "🚗 بداية الوردية"], ["🏁 نهاية الوردية", "📊 إحصائياتي"]];
+const MENU_EN = [["📋 Send Invoice", "🚗 Start Shift"], ["🏁 End Shift", "📊 My Stats"]];
 const userStates = {};
+const processedIds = new Set();
+const userLang = {};
+const processedUpdates = new Set();
 
-// ── BOT LOGIC ─────────────────────────────────────────────
+function getLang(userId) { return userLang[userId] || "ar"; }
+function t(userId, ar, en) { return getLang(userId) === "ar" ? ar : en; }
+function menu(userId) { return getLang(userId) === "ar" ? MENU_AR : MENU_EN; }
+
+const processed = new Set();
 async function handleUpdate(update) {
+  if (processed.has(update.update_id)) return;
+  processed.add(update.update_id);
+  if (processed.size > 1000) processed.clear();
+  if (processedUpdates.has(update.update_id)) return;
+  processedUpdates.add(update.update_id);
+  if (processedUpdates.size > 500) {
+    const first = processedUpdates.values().next().value;
+    processedUpdates.delete(first);
+  }
+
   const msg = update.message;
   const cb = update.callback_query;
   if (!msg && !cb) return;
@@ -119,6 +137,7 @@ async function handleUpdate(update) {
   const data = loadData();
   const driver = data.drivers[userId];
   const isOwner = parseInt(userId) === OWNER_ID;
+  const lang = getLang(userId);
 
   // Callback: register driver
   if (cb && text.startsWith("reg_")) {
@@ -127,208 +146,218 @@ async function handleUpdate(update) {
     const newName = parts.slice(2).join("_");
     data.drivers[newId] = { name: newName, chatId: parseInt(newId), registeredAt: new Date().toISOString() };
     saveData(data);
-    await tgReq("answerCallbackQuery", { callback_query_id: cb.id, text: "✅ تم التسجيل!" });
-    await sendMsg(chatId, `✅ تم تسجيل السائق <b>${newName}</b>`);
-    await sendMsg(parseInt(newId), `🎉 <b>تم تسجيلك بنجاح!</b>\n\nمرحباً ${newName}! اكتب /start للبدء.`, MENU);
+    await tgReq("answerCallbackQuery", { callback_query_id: cb.id, text: "✅" });
+    await sendMsg(chatId, "✅ تم تسجيل " + newName);
+    await sendMsg(parseInt(newId), "🎉 تم تسجيلك! اكتب /start", MENU_AR);
     return;
   }
 
-  // Callback: approve/reject invoice
+  // Callback: approve/reject
   if (cb && (text.startsWith("app_") || text.startsWith("rej_"))) {
-    const [action, invoiceId] = text.split("_");
-    const inv = data.invoices.find(i => i.id === parseInt(invoiceId));
+    const parts = text.split("_");
+    const action = parts[0];
+    const invId = parseInt(parts[1]);
+    const inv = data.invoices.find(function(i) { return i.id === invId; });
     if (!inv) { await tgReq("answerCallbackQuery", { callback_query_id: cb.id }); return; }
     if (action === "app") {
       inv.approved = true; inv.pending = false; inv.approvedAt = new Date().toISOString();
       saveData(data);
-      await tgReq("answerCallbackQuery", { callback_query_id: cb.id, text: "✅ تمت الموافقة!" });
-      await sendMsg(parseInt(inv.driverId), `✅ <b>تمت الموافقة على فاتورتك</b>\n💰 ${Number(inv.amount).toFixed(3)} د.ك`, MENU);
-      await sendMsg(chatId, `✅ تمت الموافقة على فاتورة ${inv.driverName}`);
+      await tgReq("answerCallbackQuery", { callback_query_id: cb.id, text: "✅" });
+      await sendMsg(parseInt(inv.driverId), "✅ تمت الموافقة على فاتورتك\n💰 " + Number(inv.amount).toFixed(3) + " د.ك");
+      await sendMsg(chatId, "✅ تمت الموافقة على فاتورة " + inv.driverName);
     } else {
       inv.approved = false; inv.pending = false; inv.rejected = true;
       saveData(data);
-      await tgReq("answerCallbackQuery", { callback_query_id: cb.id, text: "❌ تم الرفض" });
-      await sendMsg(parseInt(inv.driverId), `❌ <b>تم رفض فاتورتك</b>\nتواصل مع المشرف.`, MENU);
-      await sendMsg(chatId, `❌ تم رفض فاتورة ${inv.driverName}`);
+      await tgReq("answerCallbackQuery", { callback_query_id: cb.id, text: "❌" });
+      await sendMsg(parseInt(inv.driverId), "❌ تم رفض فاتورتك. تواصل مع المشرف.");
+      await sendMsg(chatId, "❌ تم رفض فاتورة " + inv.driverName);
     }
+    return;
+  }
+
+  // Language selection callback
+  if (cb && (text === "lang_ar" || text === "lang_en")) {
+    userLang[userId] = text === "lang_ar" ? "ar" : "en";
+    await tgReq("answerCallbackQuery", { callback_query_id: cb.id });
+    const name = driver ? driver.name : firstName;
+    await sendMsg(chatId, t(userId, "👋 مرحباً " + name + "! اختر من القائمة:", "👋 Hello " + name + "! Choose from menu:"), menu(userId));
     return;
   }
 
   // Unregistered
   if (!driver && !isOwner) {
-    await sendMsg(chatId,
-      `🔒 <b>حسابك غير مسجل</b>\n\nأرسل هذه المعلومات لمشرفك:\n\n👤 الاسم: ${firstName}\n🆔 Telegram ID: <code>${userId}</code>`
-    );
+    await sendMsg(chatId, "🔒 حسابك غير مسجل\n\n👤 اسمك: " + firstName + "\n🆔 ID: " + userId + "\n\nأرسل هذا المعرف لمشرفك.");
     if (OWNER_ID) {
       await sendInline(OWNER_ID,
-        `📬 <b>طلب تسجيل</b>\n👤 ${firstName}\n🆔 ID: <code>${userId}</code>`,
-        [[{ text: "✅ تسجيل", callback_data: `reg_${userId}_${firstName}` }]]
+        "📬 طلب تسجيل جديد\n👤 " + firstName + "\n🆔 " + userId,
+        [[{ text: "✅ تسجيل " + firstName, callback_data: "reg_" + userId + "_" + firstName }]]
       );
     }
     return;
   }
 
-  // /start
+  // /start - show language selection
   if (text === "/start") {
-    await sendMsg(chatId, `👋 <b>مرحباً ${driver ? driver.name : firstName}!</b>\n\nاختر من القائمة:`, MENU);
+    await sendInline(chatId, "🌐 اختر اللغة / Choose language:", [[
+      { text: "🇸🇦 العربية", callback_data: "lang_ar" },
+      { text: "🇬🇧 English", callback_data: "lang_en" }
+    ]]);
     return;
   }
 
-  if (text === "📋 إرسال فاتورة") { userStates[userId] = "invoice"; await sendMsg(chatId, "📸 أرسل صورة الفاتورة."); return; }
-  if (text === "🚗 بداية الوردية") {
+  // Invoice
+  if (text === "📋 إرسال فاتورة" || text === "📋 Send Invoice") {
+    userStates[userId] = "invoice";
+    await sendMsg(chatId, t(userId, "📸 أرسل صورة الفاتورة.", "📸 Send a photo of the invoice."));
+    return;
+  }
+
+  // Start shift
+  if (text === "🚗 بداية الوردية" || text === "🚗 Start Shift") {
     const today = new Date().toISOString().split("T")[0];
-    if (data.shifts.find(s => s.driverId === userId && s.date === today && !s.endKm)) {
-      await sendMsg(chatId, "⚠️ عندك وردية مفتوحة اليوم. أنهها أولاً."); return;
+    if (data.shifts.find(function(s) { return s.driverId === userId && s.date === today && !s.endKm; })) {
+      await sendMsg(chatId, t(userId, "⚠️ عندك وردية مفتوحة اليوم.", "⚠️ You have an open shift today.")); return;
     }
     userStates[userId] = "start_km";
-    await sendMsg(chatId, "📸 أرسل صورة عداد السيارة (بداية الوردية)."); return;
+    await sendMsg(chatId, t(userId, "📸 أرسل صورة عداد السيارة (البداية).", "📸 Send odometer photo (start).")); return;
   }
-  if (text === "🏁 نهاية الوردية") {
+
+  // End shift
+  if (text === "🏁 نهاية الوردية" || text === "🏁 End Shift") {
     const today = new Date().toISOString().split("T")[0];
-    const open = data.shifts.find(s => s.driverId === userId && s.date === today && !s.endKm);
-    if (!open) { await sendMsg(chatId, "⚠️ لا توجد وردية مفتوحة. ابدأ وردية أولاً."); return; }
+    const open = data.shifts.find(function(s) { return s.driverId === userId && s.date === today && !s.endKm; });
+    if (!open) { await sendMsg(chatId, t(userId, "⚠️ لا توجد وردية مفتوحة.", "⚠️ No open shift found.")); return; }
     userStates[userId] = "end_km";
-    await sendMsg(chatId, `📸 أرسل صورة عداد السيارة (نهاية الوردية).\n\nبداية: ${open.startKm} كم`); return;
+    await sendMsg(chatId, t(userId, "📸 أرسل صورة عداد السيارة (النهاية).\nبداية: " + open.startKm + " كم", "📸 Send odometer photo (end).\nStart: " + open.startKm + " km")); return;
   }
-  if (text === "📊 إحصائياتي") {
+
+  // Stats
+  if (text === "📊 إحصائياتي" || text === "📊 My Stats") {
     const today = new Date().toISOString().split("T")[0];
-    const myShifts = data.shifts.filter(s => s.driverId === userId && s.totalKm);
-    const todayKm = data.shifts.find(s => s.driverId === userId && s.date === today && s.totalKm);
-    const myInv = data.invoices.filter(i => i.driverId === userId && i.approved);
-    await sendMsg(chatId,
-      `📊 <b>إحصائياتي</b>\n\n🚗 كيلومترات اليوم: ${todayKm ? todayKm.totalKm.toFixed(1) : 0} كم\n📏 إجمالي الكيلومترات: ${myShifts.reduce((s,x)=>s+x.totalKm,0).toFixed(1)} كم\n🔄 عدد الورديات: ${myShifts.length}\n💰 الفواتير المقبولة: ${myInv.length}\n💵 إجمالي الإيرادات: ${myInv.reduce((s,i)=>s+(i.amount||0),0).toFixed(3)} د.ك`,
-      MENU
-    );
+    const myShifts = data.shifts.filter(function(s) { return s.driverId === userId && s.totalKm; });
+    const todayShift = myShifts.find(function(s) { return s.date === today; });
+    const myInv = data.invoices.filter(function(i) { return i.driverId === userId && i.approved; });
+    const totalKm = myShifts.reduce(function(s, x) { return s + x.totalKm; }, 0);
+    const totalRev = myInv.reduce(function(s, i) { return s + (i.amount || 0); }, 0);
+    if (lang === "ar") {
+      await sendMsg(chatId, "📊 إحصائياتي\n\n🚗 كيلومترات اليوم: " + (todayShift ? todayShift.totalKm.toFixed(1) : 0) + " كم\n📏 إجمالي الكيلومترات: " + totalKm.toFixed(1) + " كم\n🔄 عدد الورديات: " + myShifts.length + "\n💰 الفواتير المقبولة: " + myInv.length + "\n💵 إجمالي الإيرادات: " + totalRev.toFixed(3) + " د.ك", menu(userId));
+    } else {
+      await sendMsg(chatId, "📊 My Stats\n\n🚗 Today KM: " + (todayShift ? todayShift.totalKm.toFixed(1) : 0) + " km\n📏 Total KM: " + totalKm.toFixed(1) + " km\n🔄 Shifts: " + myShifts.length + "\n💰 Approved Invoices: " + myInv.length + "\n💵 Total Revenue: " + totalRev.toFixed(3) + " KWD", menu(userId));
+    }
     return;
   }
 
-  // Photos
+  // Handle photos
   if (photo) {
     const state = userStates[userId] || "invoice";
-    const url = await getFileUrl(photo[photo.length-1].file_id);
-    if (!url) { await sendMsg(chatId, "❌ لم أتمكن من استلام الصورة."); return; }
-    await sendMsg(chatId, "⏳ جاري معالجة الصورة بالذكاء الاصطناعي...");
+    const isEnglish = state === "invoice_en";
+    const effectiveState = state === "invoice_en" ? "invoice" : state;
+    delete userStates[userId];
+    const url = await getFileUrl(photo[photo.length - 1].file_id);
+    if (!url) { await sendMsg(chatId, t(userId, "❌ لم أتمكن من استلام الصورة.", "❌ Could not receive image.")); return; }
+    await sendMsg(chatId, t(userId, "⏳ جاري تحليل الصورة...", "⏳ Analyzing image..."));
 
-    if (state === "invoice") {
-      const res = await analyzeImage(url, "Look at this receipt/invoice. Find the total amount. Reply with ONLY this JSON, nothing else: {\"amount\": NUMBER, \"desc\": \"SHORT_DESCRIPTION\"} - Example: {\"amount\": 7.000, \"desc\": \"Crops Coffee\"}");
-      if (!res.amount) { await sendMsg(chatId, "❌ لم أتمكن من قراءة المبلغ. جرب صورة أوضح."); return; }
+    if (state === "invoice" || state === "invoice_en") {
+      const res = await analyzeImage(url, "This is a receipt/invoice image. Find the TOTAL amount paid. Return ONLY valid JSON: {\"amount\": 7.000, \"desc\": \"store name or items\"} - Use the exact number from Total/Grand Total/Amount Due field.");
+      if (!res.amount || res.error) {
+        await sendMsg(chatId, t(userId, "❌ لم أتمكن من قراءة المبلغ. جرب صورة أوضح أو اكتب المبلغ يدوياً.", "❌ Could not read amount. Try a clearer photo or type the amount manually."));
+        return;
+      }
       const inv = { id: Date.now(), driverId: userId, driverName: driver ? driver.name : firstName, chatId: parseInt(userId), amount: res.amount, desc: res.desc || "فاتورة", imageUrl: url, date: new Date().toISOString(), approved: false, pending: true, rejected: false };
       data.invoices.push(inv);
       saveData(data);
-      await sendMsg(chatId, `✅ <b>تم استلام الفاتورة!</b>\n💰 المبلغ: ${Number(res.amount).toFixed(3)} د.ك\n📝 ${res.desc}\n\n⏳ في انتظار موافقة المشرف.`, MENU);
+      await sendMsg(chatId, t(userId, "✅ تم استلام الفاتورة!\n💰 المبلغ: " + Number(res.amount).toFixed(3) + " د.ك\n📝 " + res.desc + "\n\n⏳ في انتظار موافقة المشرف.", "✅ Invoice received!\n💰 Amount: " + Number(res.amount).toFixed(3) + " KWD\n📝 " + res.desc + "\n\n⏳ Waiting for approval."), menu(userId));
       if (OWNER_ID) {
         await sendInline(OWNER_ID,
-          `📨 <b>فاتورة جديدة</b>\n👤 ${driver ? driver.name : firstName}\n💰 ${Number(res.amount).toFixed(3)} د.ك\n📝 ${res.desc}`,
-          [[{ text: "✅ قبول", callback_data: `app_${inv.id}` }, { text: "❌ رفض", callback_data: `rej_${inv.id}` }]]
+          "📨 فاتورة جديدة\n👤 " + (driver ? driver.name : firstName) + "\n💰 " + Number(res.amount).toFixed(3) + " د.ك\n📝 " + res.desc,
+          [[{ text: "✅ قبول", callback_data: "app_" + inv.id }, { text: "❌ رفض", callback_data: "rej_" + inv.id }]]
         );
       }
     } else {
-      const res = await analyzeImage(url, "هذه صورة عداد كيلومترات سيارة. أرجع JSON فقط: {\"km\": رقم}");
-      if (!res.km) { await sendMsg(chatId, "❌ لم أتمكن من قراءة العداد. جرب صورة أوضح للأرقام."); return; }
+      const res = await analyzeImage(url, "This is a vehicle odometer/mileage reading. Return ONLY valid JSON: {\"km\": 12345} - The number shown on the odometer in kilometers.");
+      if (!res.km || res.error) {
+        await sendMsg(chatId, t(userId, "❌ لم أتمكن من قراءة العداد. جرب صورة أوضح.", "❌ Could not read odometer. Try a clearer photo."));
+        return;
+      }
       const km = parseFloat(res.km);
       const today = new Date().toISOString().split("T")[0];
       if (state === "start_km") {
         const shift = { id: Date.now(), driverId: userId, driverName: driver ? driver.name : firstName, date: today, startKm: km, endKm: null, totalKm: null, startTime: new Date().toISOString(), endTime: null, startImgUrl: url };
         data.shifts.push(shift);
         saveData(data);
-        await sendMsg(chatId, `✅ <b>بدأت الوردية!</b>\n🚗 العداد: ${km} كم\n\nأرسل صورة العداد عند الانتهاء.`, MENU);
-        if (OWNER_ID) await sendMsg(OWNER_ID, `🟢 ${driver ? driver.name : firstName} بدأ وردية | ${km} كم`);
+        await sendMsg(chatId, t(userId, "✅ بدأت الوردية!\n🚗 العداد: " + km + " كم", "✅ Shift started!\n🚗 Odometer: " + km + " km"), menu(userId));
+        if (OWNER_ID) await sendMsg(OWNER_ID, "🟢 " + (driver ? driver.name : firstName) + " بدأ وردية | " + km + " كم");
       } else {
-        const open = data.shifts.find(s => s.driverId === userId && s.date === today && !s.endKm);
-        if (!open) { await sendMsg(chatId, "⚠️ لا توجد وردية مفتوحة."); return; }
+        const open = data.shifts.find(function(s) { return s.driverId === userId && s.date === today && !s.endKm; });
+        if (!open) { await sendMsg(chatId, t(userId, "⚠️ لا توجد وردية مفتوحة.", "⚠️ No open shift.")); return; }
         const total = km - open.startKm;
         open.endKm = km; open.totalKm = total; open.endTime = new Date().toISOString(); open.endImgUrl = url;
         saveData(data);
-        await sendMsg(chatId, `🏁 <b>انتهت الوردية!</b>\n📏 من ${open.startKm} إلى ${km} كم\n✅ <b>إجمالي: ${total.toFixed(1)} كم</b>`, MENU);
-        if (OWNER_ID) await sendMsg(OWNER_ID, `🏁 ${driver ? driver.name : firstName} أنهى وردية | ${total.toFixed(1)} كم`);
+        await sendMsg(chatId, t(userId, "🏁 انتهت الوردية!\n📏 من " + open.startKm + " إلى " + km + " كم\n✅ الإجمالي: " + total.toFixed(1) + " كم", "🏁 Shift ended!\n📏 From " + open.startKm + " to " + km + " km\n✅ Total: " + total.toFixed(1) + " km"), menu(userId));
+        if (OWNER_ID) await sendMsg(OWNER_ID, "🏁 " + (driver ? driver.name : firstName) + " أنهى وردية | " + total.toFixed(1) + " كم");
       }
     }
-    delete userStates[userId];
     return;
   }
 
-  await sendMsg(chatId, "اختر من القائمة 👇", MENU);
+  await sendMsg(chatId, t(userId, "اختر من القائمة 👇", "Choose from menu 👇"), menu(userId));
 }
 
-// ── HTTP SERVER + API ─────────────────────────────────────
-http.createServer((req, res) => {
-  // CORS
+// HTTP Server + API
+http.createServer(function(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") { res.writeHead(200); res.end(); return; }
-
-  const url = new URL(req.url, `http://localhost`);
-  const secret = url.searchParams.get("secret");
-
-  if (req.method === "GET" && url.pathname === "/") {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("RASEEDAK Bot is running! 🚀");
-    return;
-  }
-
-  // API: get pending invoices
-  if (req.method === "GET" && url.pathname === "/api/invoices") {
-    const data = loadData();
-    const pending = data.invoices.filter(i => i.pending);
+  const url = new URL(req.url, "http://localhost");
+  if (url.pathname === "/") { res.writeHead(200); res.end("RASEEDAK Bot 🚀"); return; }
+  if (url.pathname === "/api/invoices") {
+    const d = loadData();
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, invoices: pending }));
+    res.end(JSON.stringify({ ok: true, invoices: d.invoices.filter(function(i) { return i.pending; }) }));
     return;
   }
-
-  // API: get all data for the app
-  if (req.method === "GET" && url.pathname === "/api/data") {
-    const data = loadData();
+  if (url.pathname === "/api/data") {
+    const d = loadData();
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, shifts: data.shifts, invoices: data.invoices, drivers: data.drivers }));
+    res.end(JSON.stringify({ ok: true, shifts: d.shifts, invoices: d.invoices, drivers: d.drivers }));
     return;
   }
-
-  // API: approve invoice
-  if (req.method === "GET" && url.pathname === "/api/approve") {
+  if (url.pathname === "/api/approve") {
     const id = parseInt(url.searchParams.get("id"));
-    const data = loadData();
-    const inv = data.invoices.find(i => i.id === id);
-    if (inv) {
-      inv.approved = true; inv.pending = false; inv.approvedAt = new Date().toISOString();
-      saveData(data);
-      if (inv.chatId) sendMsg(inv.chatId, `✅ تمت الموافقة على فاتورتك\n💰 ${Number(inv.amount).toFixed(3)} د.ك`);
-    }
+    const d = loadData();
+    const inv = d.invoices.find(function(i) { return i.id === id; });
+    if (inv) { inv.approved = true; inv.pending = false; inv.approvedAt = new Date().toISOString(); saveData(d); if (inv.chatId) sendMsg(inv.chatId, "✅ تمت الموافقة على فاتورتك\n💰 " + Number(inv.amount).toFixed(3) + " د.ك"); }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: !!inv }));
     return;
   }
-
-  // API: reject invoice
-  if (req.method === "GET" && url.pathname === "/api/reject") {
+  if (url.pathname === "/api/reject") {
     const id = parseInt(url.searchParams.get("id"));
-    const data = loadData();
-    const inv = data.invoices.find(i => i.id === id);
-    if (inv) {
-      inv.approved = false; inv.pending = false; inv.rejected = true;
-      saveData(data);
-      if (inv.chatId) sendMsg(inv.chatId, "❌ تم رفض فاتورتك. تواصل مع المشرف.");
-    }
+    const d = loadData();
+    const inv = d.invoices.find(function(i) { return i.id === id; });
+    if (inv) { inv.approved = false; inv.pending = false; inv.rejected = true; saveData(d); if (inv.chatId) sendMsg(inv.chatId, "❌ تم رفض فاتورتك."); }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: !!inv }));
     return;
   }
-
   res.writeHead(404); res.end("Not found");
-}).listen(PORT, () => console.log(`Server on port ${PORT}`));
+}).listen(PORT, function() { console.log("Server on port " + PORT); });
 
-// ── POLLING ───────────────────────────────────────────────
+// Polling with deduplication
 let lastOffset = 0;
 let isPolling = false;
+
 async function poll() {
   if (isPolling) { setTimeout(poll, 2000); return; }
   isPolling = true;
   try {
     const r = await tgReq("getUpdates", { offset: lastOffset, timeout: 20 });
     if (r.ok && r.result && r.result.length > 0) {
-      for (const u of r.result) {
-        try { await handleUpdate(u); } catch(e) { console.error("Handle error:", e.message); }
+      for (let i = 0; i < r.result.length; i++) {
+        const u = r.result[i];
         lastOffset = u.update_id + 1;
+        try { await handleUpdate(u); } catch(e) { console.error("Error:", e.message); }
       }
     }
   } catch(e) { console.error("Poll error:", e.message); }
@@ -337,11 +366,11 @@ async function poll() {
 }
 
 console.log("🤖 RASEEDAK Bot starting...");
-// Skip all pending old messages on startup
-tgReq("getUpdates", { offset: -1, timeout: 1 }).then(r => {
+// Skip old pending messages
+tgReq("getUpdates", { offset: -1, timeout: 1 }).then(function(r) {
   if (r.ok && r.result && r.result.length > 0) {
     lastOffset = r.result[r.result.length - 1].update_id + 1;
-    console.log("Skipped old messages, starting from offset:", lastOffset);
+    console.log("Starting from offset:", lastOffset);
   }
   poll();
-}).catch(() => poll());
+}).catch(function() { poll(); });

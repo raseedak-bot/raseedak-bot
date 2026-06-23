@@ -85,7 +85,11 @@ function analyzeImage(imageUrl, prompt) {
             try {
               const d = JSON.parse(raw);
               const txt = d.content && d.content[0] ? d.content[0].text : "";
-              resolve(JSON.parse(txt.replace(/```[\w]*/g, "").trim()));
+              const cleaned = txt.replace(/```[\w]*/g, "").trim();
+              // Find JSON object in response
+              const jsonMatch = cleaned.match(/\{[^{}]*\}/);
+              if (jsonMatch) resolve(JSON.parse(jsonMatch[0]));
+              else resolve(JSON.parse(cleaned));
             } catch(e) { resolve({ error: e.message }); }
           });
         });
@@ -331,4 +335,11 @@ async function poll() {
 }
 
 console.log("🤖 RASEEDAK Bot starting...");
-poll();
+// Skip all pending old messages on startup
+tgReq("getUpdates", { offset: -1, timeout: 1 }).then(r => {
+  if (r.ok && r.result && r.result.length > 0) {
+    lastOffset = r.result[r.result.length - 1].update_id + 1;
+    console.log("Skipped old messages, starting from offset:", lastOffset);
+  }
+  poll();
+}).catch(() => poll());
